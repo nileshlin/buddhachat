@@ -1,0 +1,110 @@
+[
+  {
+    "id": 1,
+    "display_name": "Breath of Stillness",
+    "path": "music/mindfulness_01.mp3",
+    "category": "mindfulness",
+    "mood": ["peaceful", "focused", "grounding"],
+    "description": "Soft sustained tones that anchor the listener in the present moment.",
+    "tags": ["beginner", "morning", "focus"]
+  },
+  {
+    "id": 2,
+    "display_name": "Inner Calm",
+    "path": "music/mindfulness_02.mp3",
+    "category": "mindfulness",
+    "mood": ["calm", "centered", "spacious"],
+    "description": "Resonant tones designed to quiet mental chatter and invite stillness.",
+    "tags": ["intermediate", "daytime", "clarity"]
+  },
+  {
+    "id": 3,
+    "display_name": "Present Moment",
+    "path": "music/mindfulness_03.mp3",
+    "category": "mindfulness",
+    "mood": ["aware", "open", "gentle"],
+    "description": "Subtle harmonic layers that soften attention and expand awareness.",
+    "tags": ["advanced", "anytime", "awareness"]
+  },
+  {
+    "id": 4,
+    "display_name": "Clarity Flow",
+    "path": "music/mindfulness_04.mp3",
+    "category": "mindfulness",
+    "mood": ["clear", "focused", "bright"],
+    "description": "Flowing tones that bring mental clarity and sharp awareness.",
+    "tags": ["intermediate", "morning", "focus"]
+  },
+  {
+    "id": 5,
+    "display_name": "Deep Rest",
+    "path": "music/relax_01.mp3",
+    "category": "relaxation",
+    "mood": ["sleepy", "heavy", "releasing"],
+    "description": "Ultra-low frequencies that ease the nervous system into deep relaxation.",
+    "tags": ["beginner", "evening", "sleep"]
+  },
+  {
+    "id": 6,
+    "display_name": "Gentle Drift",
+    "path": "music/relax_02.mp3",
+    "category": "relaxation",
+    "mood": ["floating", "ease", "surrender"],
+    "description": "Warm, drifting tones that carry tension away breath by breath.",
+    "tags": ["intermediate", "afternoon", "stress-relief"]
+  },
+  {
+    "id": 7,
+    "display_name": "Velvet Dusk",
+    "path": "music/relax_03.mp3",
+    "category": "relaxation",
+    "mood": ["warm", "winding-down", "soft"],
+    "description": "Golden hour resonance for end-of-day release and restoration.",
+    "tags": ["beginner", "evening", "wind-down"]
+  },
+  {
+    "id": 8,
+    "display_name": "Twilight Haze",
+    "path": "music/relax_04.mp3",
+    "category": "relaxation",
+    "mood": ["dreamy", "hazy", "soothing"],
+    "description": "Blurred edges and soft shimmer for the liminal space between wake and sleep.",
+    "tags": ["advanced", "night", "sleep"]
+  },
+  {
+    "id": 9,
+    "display_name": "Ocean Waves",
+    "path": "music/nature_01.mp3",
+    "category": "nature",
+    "mood": ["expansive", "rhythmic", "cleansing"],
+    "description": "The steady pulse of ocean waves on a calm shoreline.",
+    "tags": ["beginner", "anytime", "breath-sync"]
+  },
+  {
+    "id": 10,
+    "display_name": "Forest Rain",
+    "path": "music/nature_02.mp3",
+    "category": "nature",
+    "mood": ["cool", "renewing", "sheltered"],
+    "description": "Rain falling through a dense canopy, washing the world clean.",
+    "tags": ["beginner", "anytime", "focus"]
+  },
+  {
+    "id": 11,
+    "display_name": "Mountain Stream",
+    "path": "music/nature_03.mp3",
+    "category": "nature",
+    "mood": ["clear", "energizing", "fresh"],
+    "description": "Cold, clear water flowing over smooth stones in high altitude silence.",
+    "tags": ["intermediate", "morning", "clarity"]
+  },
+  {
+    "id": 12,
+    "display_name": "Morning Birds",
+    "path": "music/nature_04.mp3",
+    "category": "nature",
+    "mood": ["uplifting", "alive", "joyful"],
+    "description": "The dawn chorus that signals a fresh beginning.",
+    "tags": ["beginner", "morning", "gratitude"]
+  }
+]
