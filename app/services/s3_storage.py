@@ -82,6 +82,19 @@ class S3Storage:
                 res = await res
             return res
 
+    async def file_exists(self, bucket_path: str) -> bool:
+        try:
+            async with self.session.client("s3", **self._client_kwargs()) as s3_client:
+                await s3_client.head_object(Bucket=self.bucket, Key=bucket_path)
+            return True
+        except ClientError as e:
+            status_code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            error_code = e.response.get("Error", {}).get("Code")
+            if status_code == 404 or error_code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            logger.error(f"Failed to check S3 object exists at {bucket_path}: {e}")
+            raise
+
     async def create_presigned_put_url(
         self,
         bucket_path: str,

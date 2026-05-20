@@ -1,5 +1,7 @@
+import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.db import get_db
 from app.services.session_service import SessionService
@@ -15,7 +17,7 @@ async def create_session(session: SessionCreate = SessionCreate(), current_user:
     db_session = await SessionService.create_session(db, user_id=current_user.id)
     return SessionResponse(id=db_session.id, user_id=db_session.user_id)
 
-@router.post("/{session_id}/messages", response_model=MessageResponse)
+@router.post("/{session_id}/messages")
 async def send_message(session_id: int, message: MessageCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     session = await SessionService.get_session(db, session_id)
     if not session or session.user_id != current_user.id:
@@ -28,17 +30,30 @@ async def send_message(session_id: int, message: MessageCreate, current_user: Us
     messages = await SessionService.get_session_messages(db, session_id)
     from app.services.openai_service import OpenAIService
     openai_srv = OpenAIService()
-    agent_content = await openai_srv.generate_agent_response(messages)
-    
-    # Add agent message
-    agent_message = await SessionService.create_message(db, session_id, MessageRole.AGENT, agent_content)
-    
-    return MessageResponse(
-        id=agent_message.id,
-        role=agent_message.role.value,
-        content=agent_message.content,
-        created_at=agent_message.created_at.isoformat()
-    )
+
+    async def stream_agent_response():
+        chunks: list[str] = []
+        try:
+            async for chunk in openai_srv.generate_agent_response(messages):
+                chunks.append(chunk)
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+
+            agent_content = "".join(chunks).strip()
+            agent_message = await SessionService.create_message(db, session_id, MessageRole.AGENT, agent_content)
+            done_payload = {
+                "type": "done",
+                "message": {
+                    "id": agent_message.id,
+                    "role": agent_message.role.value,
+                    "content": agent_message.content,
+                    "created_at": agent_message.created_at.isoformat(),
+                },
+            }
+            yield f"data: {json.dumps(done_payload)}\n\n"
+        except Exception:
+            yield f"data: {json.dumps({'type': 'error', 'detail': 'Failed to generate agent response'})}\n\n"
+
+    return StreamingResponse(stream_agent_response(), media_type="text/event-stream")
 
 
 @router.get("/{session_id}/messages", response_model=List[MessageResponse])

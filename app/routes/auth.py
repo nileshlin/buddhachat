@@ -56,6 +56,7 @@ async def authenticate_google(request: GoogleAuthRequest, db: AsyncSession = Dep
             user = await UserService.get_user_by_email(db, email)
             if user and not getattr(user, "google_id", None):
                 user = await UserService.update_user(db, user.id, google_id=google_id)
+        is_exists = True
         if not user:
             if not email:
                 raise HTTPException(status_code=401, detail="Google token missing email")
@@ -66,10 +67,11 @@ async def authenticate_google(request: GoogleAuthRequest, db: AsyncSession = Dep
                 name=name,
                 google_id=google_id,
             )
-            
+            is_exists=False
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
-        return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
+        
+        return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token, is_exists=is_exists)
         
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid Google token")
@@ -101,6 +103,7 @@ async def authenticate_apple(request: AppleAuthRequest, db: AsyncSession = Depen
             user = await UserService.get_user_by_email(db, email)
             if user and not getattr(user, "apple_id", None):
                 user = await UserService.update_user(db, user.id, apple_id=apple_id)
+        is_exists = True
         if not user:
             user = await UserService.create_user(
                 db,
@@ -109,10 +112,10 @@ async def authenticate_apple(request: AppleAuthRequest, db: AsyncSession = Depen
                 name=name,
                 apple_id=apple_id,
             )
-            
+            is_exists = False
         access_token = create_access_token(data={"sub": str(user.id)})
         refresh_token = create_refresh_token(data={"sub": str(user.id)})
-        return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
+        return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token, is_exists=is_exists)
 
     except (PyJWKClientError, PyJWTError, requests.RequestException):
         raise HTTPException(status_code=401, detail="Invalid Apple token")
@@ -139,14 +142,15 @@ async def verify_email_code(request: EmailOTPVerifyRequest, db: AsyncSession = D
         raise HTTPException(status_code=401, detail="Code expired")
         
     user = await UserService.get_user_by_email(db, request.email)
+    is_exists = True
     if not user:
         user = await UserService.create_user(db, email=request.email, auth_provider=AuthProvider.EMAIL)
-        
+        is_exists = False
     await OTPService.delete_otp(db, email=request.email)
     
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
-    return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token, is_exists=is_exists)
 
 @router.post("/refresh", response_model=AuthTokenResponse)
 async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
@@ -162,7 +166,7 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
             
         access_token = create_access_token(data={"sub": str(user.id)})
         new_refresh = create_refresh_token(data={"sub": str(user.id)})
-        return AuthTokenResponse(access_token=access_token, refresh_token=new_refresh)
+        return AuthTokenResponse(access_token=access_token, refresh_token=new_refresh, is_exists=True)
         
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")

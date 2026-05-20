@@ -8,7 +8,7 @@ load_dotenv()
 class Settings(BaseSettings):
     DATABASE_URL: str
     JWT_SECRET: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     
     GOOGLE_CLIENT_ID: str = ""

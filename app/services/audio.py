@@ -6,7 +6,7 @@ from pathlib import Path
 from app.config.settings import settings
 from app.config.logger import logger
 from app.services.s3_storage import S3Storage
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 
 class AudioBlockService:
@@ -18,6 +18,13 @@ class AudioBlockService:
         self.base_storage = Path(self.settings.TEMP_DIR) / "audio_blocks"
         self.base_storage.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _format_volume(value: str, *, signed_values_are_db: bool = False) -> str:
+        volume = str(value).strip()
+        if signed_values_are_db and volume and volume[0] in "+-" and not volume.lower().endswith("db"):
+            return f"{volume}dB"
+        return volume
+
     async def generate_audio_blocks(
         self,
         scripts: List[str],
@@ -26,7 +33,7 @@ class AudioBlockService:
         progress_callback=None,
         voice_volume: str = "+6.0",
         bg_volume: str = "0.35"
-    ) -> List[Dict]:
+    ) -> Dict[str, Any]:
 
         med_dir = self.base_storage / f"meditation_{meditation_id}"
         med_dir.mkdir(parents=True, exist_ok=True)
@@ -45,73 +52,100 @@ class AudioBlockService:
         ]
 
         results = []
+        block_paths: list[Path] = []
 
-        for block_def in block_definitions:
-            block_num = block_def["number"]
-            duration_sec = block_def["duration"]
-            is_tts = block_def["type"] == "tts"
+        try:
+            for block_def in block_definitions:
+                block_num = block_def["number"]
+                duration_sec = block_def["duration"]
+                is_tts = block_def["type"] == "tts"
 
-            logger.info(f"Processing block {block_num} ({'TTS' if is_tts else 'Music'}) - {duration_sec}s")
+                logger.info(f"Processing block {block_num} ({'TTS' if is_tts else 'Music'}) - {duration_sec}s")
 
-            final_filename = f"block_{block_num}.mp3"
-            final_path = med_dir / final_filename
+                final_filename = f"block_{block_num}.mp3"
+                final_path = med_dir / final_filename
 
-            if is_tts:
-                # Generate TTS + mix with background music
-                script_text = scripts[block_def["script_idx"]]
-                base_audio_path = await self._generate_base_clip(
-                    text=script_text,
-                    block_number=block_num,
-                    med_dir=med_dir
-                )
-                await self._loop_audio(
-                    input_path=base_audio_path,
-                    output_path=final_path,
-                    duration_seconds=duration_sec,
-                    music_path=music_path,
-                    tts=True,
-                    voice_volume=voice_volume,
-                    bg_volume=bg_volume
-                )
-            else:
-                if music_path and music_path.exists():
+                if is_tts:
+                    # Generate voice-only TTS blocks. 
+                    script_text = scripts[block_def["script_idx"]]
+                    base_audio_path = await self._generate_base_clip(
+                        text=script_text,
+                        block_number=block_num,
+                        med_dir=med_dir
+                    )
                     await self._loop_audio(
-                        input_path=music_path,
+                        input_path=base_audio_path,
                         output_path=final_path,
                         duration_seconds=duration_sec,
-                        music_path=music_path,
-                        tts=False,
+                        tts=True,
                         voice_volume=voice_volume,
-                        bg_volume=bg_volume
+                        bg_volume=bg_volume,
+                        pan_effect=block_num == 8
                     )
                 else:
-                    # Fallback: create silence if no music available
-                    logger.warning(f"No music available for block {block_num} → generating silence")
-                    await self._generate_silence(
-                        output_path=final_path,
-                        duration_seconds=duration_sec
+                    if music_path and music_path.exists():
+                        await self._loop_audio(
+                            input_path=music_path,
+                            output_path=final_path,
+                            duration_seconds=duration_sec,
+                            tts=False,
+                            voice_volume=voice_volume,
+                            bg_volume=bg_volume
+                        )
+                    else:
+                        # Fallback: create silence if no music available
+                        logger.warning(f"No music available for block {block_num}; generating silence")
+                        await self._generate_silence(
+                            output_path=final_path,
+                            duration_seconds=duration_sec
+                        )
+
+                block_paths.append(final_path)
+
+                bucket_path = f"meditation_{meditation_id}/{final_filename}"
+                s3_key = await self.storage.upload_file_path(final_path, bucket_path)
+
+                results.append({
+                    "block": block_num,
+                    "duration": duration_sec,
+                    "key": s3_key,
+                    "type": block_def["type"],
+                    "has_voice": is_tts,
+                    "background_audio": (
+                        music_path.name if (not is_tts and music_path) else None
                     )
+                })
 
-            bucket_path = f"meditation_{meditation_id}/{final_filename}"
-            s3_key = await self.storage.upload_file_path(final_path, bucket_path)
+                if progress_callback:
+                    prog = int(40 + (50 * block_num / len(block_definitions)))
+                    await progress_callback(prog)
 
-            if final_path.exists():
-                os.remove(final_path)
+            merged_filename = "merged.mp3"
+            merged_path = med_dir / merged_filename
+            await self._merge_audio_blocks(block_paths, merged_path)
 
-            results.append({
-                "block": block_num,
-                "duration": duration_sec,
-                "key": s3_key,
-                "type": block_def["type"],
-                "has_voice": is_tts,
-                "background_audio": music_path.name if music_path else None
-            })
-            
+            merged_bucket_path = f"meditation_{meditation_id}/{merged_filename}"
+            merged_s3_key = await self.storage.upload_file_path(merged_path, merged_bucket_path)
+
             if progress_callback:
-                prog = int(40 + (50 * block_num / len(block_definitions)))
-                await progress_callback(prog)
+                await progress_callback(95)
 
-        return results
+            return {
+                "blocks": results,
+                "merged_audio": {
+                    "key": merged_s3_key,
+                    "duration": sum(block["duration"] for block in results),
+                    "type": "merged",
+                    "background_audio": music_path.name if music_path else None
+                }
+            }
+        finally:
+            for path in [*block_paths, med_dir / "merged.mp3", med_dir / "concat_blocks.txt"]:
+                if path.exists():
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        logger.exception(f"Failed to remove temporary audio file: {path}")
 
     async def _generate_base_clip(self, text: str, block_number: int, med_dir: Path) -> Path:
         headers = {
@@ -143,58 +177,83 @@ class AudioBlockService:
 
         return base_path
 
+    @staticmethod
+    def _escape_concat_path(path: Path) -> str:
+        return path.resolve().as_posix().replace("'", r"'\''")
+
+    async def _merge_audio_blocks(self, block_paths: list[Path], output_path: Path):
+        if not block_paths:
+            raise RuntimeError("No audio blocks available to merge")
+
+        concat_file = output_path.parent / "concat_blocks.txt"
+        with open(concat_file, "w", encoding="utf-8") as f:
+            for path in block_paths:
+                f.write(f"file '{self._escape_concat_path(path)}'\n")
+
+        cmd = [
+            self.settings.FFMPEG_PATH, "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-c:a", "libmp3lame",
+            "-b:a", "128k",
+            "-ac", "2",
+            "-ar", "44100",
+            str(output_path)
+        ]
+
+        def _run():
+            logger.info(f"[FFMPEG] {' '.join(cmd)}")
+            return subprocess.run(cmd, capture_output=True, text=True)
+
+        result = await asyncio.to_thread(_run)
+
+        if result.returncode != 0:
+            logger.error(f"Audio merge failed: {result.stderr}")
+            raise RuntimeError("Failed to merge audio blocks")
+
+        logger.info(f"Generated merged audio: {output_path}")
+
     async def _loop_audio(
         self,
         input_path: Path,
         output_path: Path,
         duration_seconds: int,
-        music_path: Optional[Path] = None,
         tts: bool = False,
         voice_volume: str = "+6.0",
-        bg_volume: str = "0.35"
+        bg_volume: str = "0.35",
+        pan_effect: bool = False
     ):
         duration_f = float(duration_seconds)
-        VOICE_VOLUME_DB = voice_volume
-        BG_VOLUME_VAR = bg_volume
+        VOICE_VOLUME_DB = self._format_volume(voice_volume, signed_values_are_db=True)
+        BG_VOLUME_VAR = self._format_volume(bg_volume)
 
         cmd = [self.settings.FFMPEG_PATH, "-y"]
 
         if tts:
-            if music_path and music_path.exists():
-                # TTS + MUSIC
-                cmd.extend([
-                    "-i", str(input_path),
-                    "-stream_loop", "-1", "-i", str(music_path),
-                    "-filter_complex",
-                    f"[0:a]volume={VOICE_VOLUME_DB}[v];"
-                    f"[1:a]volume={BG_VOLUME_VAR}[m];"
-                    f"[v][m]amix=inputs=2:duration=longest:dropout_transition=0",
-                    "-c:a", "libmp3lame",
-                    "-b:a", "128k",
-                    "-t", str(duration_f),
-                    str(output_path)
-                ])
-            else:
-                # TTS ONLY (fallback)
-                cmd.extend([
-                    "-i", str(input_path),
-                    "-filter_complex",
-                    f"[0:a]volume={VOICE_VOLUME_DB},apad[a]",
-                    "-map", "[a]",
-                    "-c:a", "libmp3lame",
-                    "-b:a", "128k",
-                    "-t", str(duration_f),
-                    str(output_path)
-                ])
+            pan_filter = ",apulsator=hz=0.08:width=0.55" if pan_effect else ""
+            # TTS ONLY
+            cmd.extend([
+                "-i", str(input_path),
+                "-filter_complex",
+                f"[0:a]volume={VOICE_VOLUME_DB},apad,aformat=channel_layouts=stereo{pan_filter}[a]",
+                "-map", "[a]",
+                "-c:a", "libmp3lame",
+                "-b:a", "128k",
+                "-ac", "2",
+                "-t", str(duration_f),
+                str(output_path)
+            ])
 
         else:
             # MUSIC ONLY
             cmd.extend([
                 "-stream_loop", "-1", "-i", str(input_path),
-                "-filter_complex", f"[0:a]volume={BG_VOLUME_VAR}[a]",
+                "-filter_complex", f"[0:a]volume={BG_VOLUME_VAR},aformat=channel_layouts=stereo[a]",
                 "-map", "[a]",
                 "-c:a", "libmp3lame",
                 "-b:a", "128k",
+                "-ac", "2",
                 "-t", str(duration_f),
                 str(output_path)
             ])
@@ -219,9 +278,10 @@ class AudioBlockService:
         cmd = [
             self.settings.FFMPEG_PATH, "-y",
             "-f", "lavfi",
-            "-i", f"anullsrc=r=44100:cl=mono:d={duration_f}",
+            "-i", f"anullsrc=r=44100:cl=stereo:d={duration_f}",
             "-c:a", "libmp3lame",
             "-b:a", "128k",
+            "-ac", "2",
             "-ar", "44100",
             str(output_path)
         ]

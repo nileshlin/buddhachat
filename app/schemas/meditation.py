@@ -10,6 +10,13 @@ class AudioBlock(BaseModel):
     has_voice: Optional[bool] = False
     background_audio: Optional[str]
 
+class AudioFile(BaseModel):
+    duration: Optional[int] = None
+    key: Optional[str] = None
+    url: Optional[str] = None
+    type: Optional[str] = None
+    background_audio: Optional[str] = None
+
 class MeditationResponse(BaseModel):
     id: int
     session_id: int
@@ -17,6 +24,7 @@ class MeditationResponse(BaseModel):
     summary: Optional[str] = None
     script: Optional[List[str]] = None
     audio_blocks: Optional[List[AudioBlock]] = None
+    merged_audio: Optional[AudioFile] = None
     status: str
     progress: int = 0
     is_liked: bool = False

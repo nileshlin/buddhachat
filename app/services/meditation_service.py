@@ -50,3 +50,28 @@ class MeditationService:
             
         result = await db.execute(stmt)
         return result.scalars().all()
+
+    @staticmethod
+    async def search_user_meditations_by_name(
+        db: AsyncSession,
+        user_id: int,
+        title: str,
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[Meditation]:
+        search_term = title.strip()
+        if not search_term:
+            return []
+
+        stmt = (
+            select(Meditation)
+            .join(Session, Meditation.session_id == Session.id)
+            .where(Session.user_id == user_id)
+            .where(Meditation.name.ilike(f"%{search_term}%"))
+            .order_by(Meditation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        result = await db.execute(stmt)
+        return result.scalars().all()

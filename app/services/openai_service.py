@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
 import openai
 from openai import AsyncOpenAI
@@ -62,9 +62,30 @@ class OpenAIService:
             raise last_exc
         raise RuntimeError("Retry loop exited unexpectedly")
 
-    async def generate_agent_response(self, messages: List[Message]) -> str:
+    def _format_agent_messages(self, messages: List[Message]) -> list[dict[str, str]]:
         user_turns = sum(1 for msg in messages if msg.role.value == "user")
         agent_turns = sum(1 for msg in messages if msg.role.value == "agent")
+
+        # system_instruction = (
+        #     "You are a calm, attentive meditation preparation assistant.\n"
+        #     "Your job is to ask short, natural follow-up questions to understand the user's situation, "
+        #     "so we can generate a personalized meditation audio based on this conversation.\n\n"
+        #     "Conversation goals (gather gently, one at a time):\n"
+        #     "- Current state (busy mind, anxiety, sadness, fatigue, pain, stress, etc.)\n"
+        #     "- What they want to feel after the meditation (goal/intention)\n"
+        #     "Rules:\n"
+        #     "1) Ask ONLY ONE question per response.\n"
+        #     "2) Keep it 1-2 sentences maximum.\n"
+        #     "3) Be warm and validating; do not teach, advise, or explain techniques.\n"
+        #     "4) Do NOT generate any meditation script.\n"
+        #     "5) Do NOT be repetitive; build on what the user just said.\n\n"
+        #     "When you have enough information (usually after 3-4 user messages), respond with a brief confirmation "
+        #     "that matches the user's situation (1-2 sentences) and do NOT ask another question.\n\n"
+        #     f"Meta: So far there are {user_turns} user messages and {agent_turns} agent messages.\n"
+        #     "If the user says 'create meditation' or similar, start by asking about their current mental/emotional state.\n"
+        # )
+        
+        
 
         system_instruction = (
             "You are a calm, attentive meditation preparation assistant.\n"
@@ -79,7 +100,14 @@ class OpenAIService:
             "3) Be warm and validating; do not teach, advise, or explain techniques.\n"
             "4) Do NOT generate any meditation script.\n"
             "5) Do NOT be repetitive; build on what the user just said.\n\n"
-            "When you have enough information (usually after 3-4 user messages), respond with a brief confirmation "
+            "When you have enough information, ONLY when BOTH of the following are clearly understood:\n"
+            "- The user's current mental/emotional state (e.g., anxiety, stress, fatigue, etc.)\n"
+            "- What they want to feel after the meditation (goal/intention)\n\n"
+            "Do NOT rely on the number of messages. If the user has not provided meaningful information, continue asking gentle follow-up questions.\n"
+            "If the user messages are greetings, vague, or lack emotional detail, do NOT move to confirmation.\n\n"
+            "When ready, respond with a brief confirmation (1-2 sentences).\n"
+            "Start EXACTLY with: 'Thank you for sharing.'\n"
+            "Then append a natural confirmation reflecting the user's situation.\n"
             "that matches the user's situation (1-2 sentences) and do NOT ask another question.\n\n"
             f"Meta: So far there are {user_turns} user messages and {agent_turns} agent messages.\n"
             "If the user says 'create meditation' or similar, start by asking about their current mental/emotional state.\n"
@@ -95,14 +123,30 @@ class OpenAIService:
                 }
             )
 
-        resp = await self.client.chat.completions.create(
+        return formatted_messages
+
+    async def generate_agent_response(self, messages: List[Message]) -> AsyncIterator[str]:
+        formatted_messages = self._format_agent_messages(messages)
+
+        stream = await self.client.chat.completions.create(
             model=self.model,
             messages=formatted_messages,
             max_tokens=150,
+            stream=True,
         )
 
-        content = resp.choices[0].message.content or ""
-        return content.strip()
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+    async def generate_agent_response_text(self, messages: List[Message]) -> str:
+        chunks: list[str] = []
+        async for chunk in self.generate_agent_response(messages):
+            chunks.append(chunk)
+        return "".join(chunks).strip()
 
     async def summarize_conversation(self, messages: List[Message]) -> str:
         if not messages:
@@ -189,24 +233,58 @@ class OpenAIService:
             if prev_block_tail
             else ""
         )
-        user_prompt = (
-            f"Write Block {block_index} of a 5-block spoken meditation script.\n"
-            f"Language: {language}\n"
-            f"Context summary: {summary}\n"
-            f"Block focus: {block_description}\n"
-            f"Target length: {target_words} words (acceptable range: {lower}-{upper}).\n"
+        block_specific_rules = ""
+        if block_index == 5:
+            block_specific_rules = (
+                "Block 5 mantra-only requirements:\n"
+                "- Output a mantra practice, not guided meditation narration.\n"
+                "- Start with a brief introduction 1-2 lines to the mantra practice.\n"
+                "- Choose 3-6 short personalized mantras that match the user's emotional state and goal.\n"
+                "- Each mantra must be 3-8 words.\n"
+                "- Repeat each mantra 4-5 times, using the exact same wording for that mantra.\n"
+                "- Put each repetition on its own line.\n"
+                "- Separate mantra groups with one blank line.\n"
+                "- Do not add explanations, breathing instructions, body guidance, transitions, or closing narration.\n"
+                "- Do not include phrases like 'breathe in', 'let these words', 'carry these words', "
+                "'when you are ready', 'bring your awareness back', or 'thank yourself'.\n"
+            )
+
+        style_rules = (
             "Style:\n"
             "- Warm, calm, and natural spoken narration.\n"
             "- Use short sentences and occasional line breaks for breath.\n"
             "- No headings, no labels like 'Block 1', no stage directions like [pause].\n"
             "- Output ONLY the block text.\n"
+        )
+        if block_index == 5:
+            style_rules = (
+                "Style:\n"
+                "- Simple, rhythmic mantra lines only.\n"
+                "- No headings, no labels like 'Block 5', no stage directions like [pause].\n"
+                "- Output ONLY the mantra lines.\n"
+            )
+
+        user_prompt = (
+            f"Write Block {block_index} of a 5-block spoken meditation script.\n"
+            f"Language: {language}\n"
+            f"Context summary: {summary}\n"
+            f"Block focus: {block_description}\n"
+            f"Target length: {target_words} words (acceptable range: {lower}-{upper}).\n\n"
+            f"{style_rules}"
+            f"{block_specific_rules}"
             f"{transition}"
         )
+        system_content = (
+            "You write meditation narration for a guided audio experience."
+            if block_index != 5
+            else "You write short, repeatable meditation mantras for a guided audio experience."
+        )
+
         async def _call(tokens: int, temp: float):
             return await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You write meditation narration for a guided audio experience."},
+                    {"role": "system", "content": system_content},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temp,
@@ -222,20 +300,23 @@ class OpenAIService:
         wc = self._count_words(content)
 
         if wc != -1 and (wc < int(lower * 0.8) or wc > int(upper * 1.2)):
+            rewrite_target = "mantra lines" if block_index == 5 else "meditation text"
             rewrite_prompt = (
-                f"Rewrite the meditation text below to be {lower}-{upper} words.\n"
+                f"Rewrite the {rewrite_target} below to be {lower}-{upper} words.\n"
                 f"Language: {language}\n"
                 "Keep the same meaning and tone.\n"
                 "Rules:\n"
                 "- Output ONLY the rewritten block text.\n"
                 "- No headings, no stage directions.\n\n"
+                f"{style_rules}"
+                f"{block_specific_rules}\n"
                 f"Text:\n{content}"
             )
             resp2 = await self._with_retries(
                 lambda: self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": "You revise meditation narration for length and flow."},
+                        {"role": "system", "content": system_content},
                         {"role": "user", "content": rewrite_prompt},
                     ],
                     temperature=0.4,
@@ -258,7 +339,8 @@ class OpenAIService:
             (2, "Deepening focus and breath work.", 300, 900),
             (3, "Core theme exploration.", 180, 600),
             (4, "Integration and silence preparation.", 240, 750),
-            (5, "Gentle awakening and conclusion.", 240, 750),
+            # (5, "Repeated personalized mantras only.", 120, 450),
+            (5, "Repeated personalized mantras only.", 240, 450),
         ]
 
         script_blocks: List[str] = []

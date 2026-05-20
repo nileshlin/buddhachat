@@ -18,9 +18,41 @@ router = APIRouter()
 async def _hydrate_meditation_response(meditation) -> MeditationResponse:
     storage = S3Storage()
     audio_blocks_out = None
-    if meditation.audio_blocks:
+    merged_audio_out = None
+    raw_audio = meditation.audio_blocks
+
+    async def hydrate_audio_file(audio_file: dict | None):
+        if not audio_file:
+            return None
+
+        key = audio_file.get("key")
+        legacy_url = audio_file.get("url")
+        if not key and legacy_url and not str(legacy_url).startswith("http"):
+            key = legacy_url
+
+        url = None
+        if key:
+            url = await storage.create_presigned_get_url(key)
+        elif legacy_url and str(legacy_url).startswith("http"):
+            url = legacy_url
+
+        return {
+            "duration": audio_file.get("duration"),
+            "type": audio_file.get("type"),
+            "background_audio": audio_file.get("background_audio"),
+            "key": key,
+            "url": url,
+        }
+
+    if isinstance(raw_audio, dict):
+        audio_entries = raw_audio.get("blocks") or []
+        merged_audio_out = await hydrate_audio_file(raw_audio.get("merged_audio"))
+    else:
+        audio_entries = raw_audio or []
+
+    if audio_entries:
         audio_blocks_out = []
-        for block in meditation.audio_blocks:
+        for block in audio_entries:
             key = block.get("key")
             legacy_url = block.get("url")
             if not key and legacy_url and not str(legacy_url).startswith("http"):
@@ -44,6 +76,18 @@ async def _hydrate_meditation_response(meditation) -> MeditationResponse:
                 }
             )
 
+    if audio_blocks_out and not merged_audio_out:
+        fallback_key = f"meditation_{meditation.id}/merged.mp3"
+        if await storage.file_exists(fallback_key):
+            merged_audio_out = await hydrate_audio_file(
+                {
+                    "key": fallback_key,
+                    "duration": sum(int(block.get("duration") or 0) for block in audio_entries),
+                    "type": "merged",
+                    "background_audio": audio_entries[0].get("background_audio") if audio_entries else None,
+                }
+            )
+
     status = meditation.status.value if hasattr(meditation.status, "value") else str(meditation.status)
 
     return MeditationResponse(
@@ -53,6 +97,7 @@ async def _hydrate_meditation_response(meditation) -> MeditationResponse:
         summary=meditation.summary,
         script=meditation.script,
         audio_blocks=audio_blocks_out,
+        merged_audio=merged_audio_out,
         status=status,
         progress=meditation.progress or 0,
         is_liked=bool(meditation.is_liked),
@@ -96,6 +141,24 @@ async def list_completed_meditations(
     db: AsyncSession = Depends(get_db)
 ):
     meditations = await MeditationService.get_user_meditations(db, user_id=current_user.id, query=query, limit=limit, offset=offset)
+    return [await _hydrate_meditation_response(m) for m in meditations]
+
+
+@router.get("/search", response_model=List[MeditationResponse])
+async def search_meditations(
+    title: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    meditations = await MeditationService.search_user_meditations_by_name(
+        db=db,
+        user_id=current_user.id,
+        title=title,
+        limit=limit,
+        offset=offset,
+    )
     return [await _hydrate_meditation_response(m) for m in meditations]
 
 
