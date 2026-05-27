@@ -30,6 +30,7 @@ class AudioBlockService:
         scripts: List[str],
         meditation_id: int,
         music_path: Optional[Path] = None,
+        music_key: Optional[str] = None,
         progress_callback=None,
         voice_volume: str = "+6.0",
         bg_volume: str = "0.35"
@@ -53,6 +54,9 @@ class AudioBlockService:
 
         results = []
         block_paths: list[Path] = []
+        background_block_paths: list[Path] = []
+        tts_layer_paths: list[Path] = []
+        temp_layer_paths: list[Path] = []
 
         try:
             for block_def in block_definitions:
@@ -82,7 +86,29 @@ class AudioBlockService:
                         bg_volume=bg_volume,
                         pan_effect=block_num == 8
                     )
+
+                    background_music_key = None
+                    if music_path and music_path.exists():
+                        background_filename = f"block_{block_num}_background.mp3"
+                        background_path = med_dir / background_filename
+                        await self._loop_audio(
+                            input_path=music_path,
+                            output_path=background_path,
+                            duration_seconds=duration_sec,
+                            tts=False,
+                            voice_volume=voice_volume,
+                            bg_volume=bg_volume
+                        )
+                        background_block_paths.append(background_path)
+                        background_bucket_path = f"meditation_{meditation_id}/{background_filename}"
+                        background_music_key = await self.storage.upload_file_path(
+                            background_path,
+                            background_bucket_path
+                        )
+
+                    tts_layer_paths.append(final_path)
                 else:
+                    background_music_key = None
                     if music_path and music_path.exists():
                         await self._loop_audio(
                             input_path=music_path,
@@ -100,6 +126,14 @@ class AudioBlockService:
                             duration_seconds=duration_sec
                         )
 
+                    silence_path = med_dir / f"block_{block_num}_tts_silence.mp3"
+                    await self._generate_silence(
+                        output_path=silence_path,
+                        duration_seconds=duration_sec
+                    )
+                    temp_layer_paths.append(silence_path)
+                    tts_layer_paths.append(silence_path)
+
                 block_paths.append(final_path)
 
                 bucket_path = f"meditation_{meditation_id}/{final_filename}"
@@ -113,34 +147,79 @@ class AudioBlockService:
                     "has_voice": is_tts,
                     "background_audio": (
                         music_path.name if (not is_tts and music_path) else None
-                    )
+                    ),
+                    "background_music_key": background_music_key,
+                    "source_background_music_key": music_key,
                 })
 
                 if progress_callback:
                     prog = int(40 + (50 * block_num / len(block_definitions)))
                     await progress_callback(prog)
 
-            merged_filename = "merged.mp3"
-            merged_path = med_dir / merged_filename
-            await self._merge_audio_blocks(block_paths, merged_path)
+            total_duration = sum(block["duration"] for block in results)
 
-            merged_bucket_path = f"meditation_{meditation_id}/{merged_filename}"
-            merged_s3_key = await self.storage.upload_file_path(merged_path, merged_bucket_path)
+            merged_tts_layer_filename = "merged_tts_layer.mp3"
+            merged_tts_layer_path = med_dir / merged_tts_layer_filename
+            await self._merge_audio_blocks(tts_layer_paths, merged_tts_layer_path)
+            merged_tts_layer_bucket_path = f"meditation_{meditation_id}/{merged_tts_layer_filename}"
+            merged_tts_layer_s3_key = await self.storage.upload_file_path(
+                merged_tts_layer_path,
+                merged_tts_layer_bucket_path
+            )
+
+            merged_music_layer_filename = "merged_music_layer.mp3"
+            merged_music_layer_path = med_dir / merged_music_layer_filename
+            if music_path and music_path.exists():
+                await self._loop_audio(
+                    input_path=music_path,
+                    output_path=merged_music_layer_path,
+                    duration_seconds=total_duration,
+                    tts=False,
+                    voice_volume=voice_volume,
+                    bg_volume=bg_volume
+                )
+            else:
+                logger.warning("No music available for merged music layer; generating silence")
+                await self._generate_silence(
+                    output_path=merged_music_layer_path,
+                    duration_seconds=total_duration
+                )
+
+            merged_music_layer_bucket_path = f"meditation_{meditation_id}/{merged_music_layer_filename}"
+            merged_music_layer_s3_key = await self.storage.upload_file_path(
+                merged_music_layer_path,
+                merged_music_layer_bucket_path
+            )
 
             if progress_callback:
                 await progress_callback(95)
 
             return {
                 "blocks": results,
-                "merged_audio": {
-                    "key": merged_s3_key,
-                    "duration": sum(block["duration"] for block in results),
-                    "type": "merged",
-                    "background_audio": music_path.name if music_path else None
+                "merged_tts_layer": {
+                    "key": merged_tts_layer_s3_key,
+                    "duration": total_duration,
+                    "type": "tts_layer",
+                    "background_audio": None
+                },
+                "merged_music_layer": {
+                    "key": merged_music_layer_s3_key,
+                    "duration": total_duration,
+                    "type": "music_layer",
+                    "background_audio": music_path.name if music_path else None,
+                    "source_background_music_key": music_key,
                 }
             }
         finally:
-            for path in [*block_paths, med_dir / "merged.mp3", med_dir / "concat_blocks.txt"]:
+            cleanup_paths = [
+                *block_paths,
+                *background_block_paths,
+                *temp_layer_paths,
+                med_dir / "merged_tts_layer.mp3",
+                med_dir / "merged_music_layer.mp3",
+                med_dir / "concat_blocks.txt",
+            ]
+            for path in cleanup_paths:
                 if path.exists():
                     try:
                         os.remove(path)

@@ -6,9 +6,11 @@ class AudioBlock(BaseModel):
     duration: int
     key: Optional[str] = None
     url: Optional[str] = None
+    background_music_key: Optional[str] = None
+    background_music_url: Optional[str] = None
     type: Optional[str] = None
     has_voice: Optional[bool] = False
-    background_audio: Optional[str]
+    background_audio: Optional[str] = None
 
 class AudioFile(BaseModel):
     duration: Optional[int] = None
@@ -16,6 +18,7 @@ class AudioFile(BaseModel):
     url: Optional[str] = None
     type: Optional[str] = None
     background_audio: Optional[str] = None
+    source_background_music_key: Optional[str] = None
 
 class MeditationResponse(BaseModel):
     id: int
@@ -24,7 +27,8 @@ class MeditationResponse(BaseModel):
     summary: Optional[str] = None
     script: Optional[List[str]] = None
     audio_blocks: Optional[List[AudioBlock]] = None
-    merged_audio: Optional[AudioFile] = None
+    merged_tts_layer: Optional[AudioFile] = None
+    merged_music_layer: Optional[AudioFile] = None
     status: str
     progress: int = 0
     is_liked: bool = False

@@ -181,6 +181,7 @@ async def async_generate_meditation(med_id: int, session_id: int, user_id: int):
                 scripts,
                 meditation_id=med_id,
                 music_path=music_path,
+                music_key=music.path if music else None,
                 progress_callback=update_progress,
                 voice_volume=voice_vol,
                 bg_volume=bg_vol

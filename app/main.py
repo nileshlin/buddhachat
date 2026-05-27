@@ -60,6 +60,11 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    await session.elevenlabs_agent.close_all_sessions()
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Session, Message, MessageRole
@@ -7,14 +7,6 @@ from app.database.models import Session, Message, MessageRole
 class SessionService:
     @staticmethod
     async def create_session(db: AsyncSession, user_id: int) -> Session:
-        subquery = select(Message.session_id)
-
-        await db.execute(
-            delete(Session)
-            .where(Session.user_id == user_id)
-            .where(~Session.id.in_(subquery))
-        )
-
         db_session = Session(user_id=user_id)
         db.add(db_session)
 

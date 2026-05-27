@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     APPLE_ISSUER: str = "https://appleid.apple.com"
     
     ELEVENLABS_API_KEY: str
+    ELEVENLABS_AGENT_ID: str = ""
     ELEVENLABS_VOICE_ID: str = "1ok9oo8w0A9iIezS9imJ"
     ELEVENLABS_MODEL: str
     
